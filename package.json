@@ -14,7 +14,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "sqlite3": "^5.1.7",
+    "sql.js": "^1.10.3",
     "node-cron": "^3.0.3",
     "pdfkit": "^0.14.0",
     "exceljs": "^4.4.0",
