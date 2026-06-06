@@ -73,7 +73,6 @@ function grantPoints(params) {
     emp_id,
     rule_code,
     points,
-    source_type = 'MANUAL',
     source_id = null,
     remark = '',
     operator_id = null,
@@ -82,6 +81,7 @@ function grantPoints(params) {
 
   let actualPoints = points;
   let rule = null;
+  let source_type = params.source_type || 'MANUAL';
 
   if (rule_code) {
     rule = getPointsRule(rule_code);

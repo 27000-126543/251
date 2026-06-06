@@ -1,5 +1,5 @@
 const { prepare, withTransaction } = require('../db');
-const { generateOrderNo, generateApprovalNo } = require('../utils/helpers');
+const { generateOrderNo, generateApprovalNo, generateTxnNo } = require('../utils/helpers');
 const { getPointsAccount, deductFrozenPoints } = require('./points.service');
 const { getProduct, createPurchaseRequest } = require('./product.service');
 const { createOperationLog } = require('./operation-log.service');
@@ -156,23 +156,38 @@ function createOrder(params) {
       }
     }
 
-    const accountStmt = prepare('SELECT * FROM points_accounts WHERE emp_id = ?');
-    const account = accountStmt.get(emp_id);
-    if (account) {
-      const freezeStmt = prepare(`
+    const freezeStmt = prepare(`
+      UPDATE points_accounts
+      SET available_points = available_points - ?,
+          frozen_points = frozen_points + ?,
+          version = version + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND version = ?
+    `);
+    const freezeResult = freezeStmt.run(total_points, total_points, account.id, account.version);
+    if (freezeResult.changes === 0) {
+      throw new Error('积分冻结失败，并发冲突，请重试');
+    }
+
+    if (requiredApprovalLevel === 0) {
+      const deductFrozenStmt = prepare(`
         UPDATE points_accounts
-        SET available_points = available_points - ?,
-            frozen_points = frozen_points + ?,
+        SET frozen_points = frozen_points - ?,
             version = version + 1,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND version = ?
+        WHERE id = ?
       `);
-      const freezeResult = freezeStmt.run(total_points, total_points, account.id, account.version);
-      if (freezeResult.changes === 0) {
-        throw new Error('积分冻结失败，并发冲突，请重试');
-      }
-    } else {
-      throw new Error('积分账户不存在');
+      deductFrozenStmt.run(total_points, account.id);
+
+      const txn_no = generateTxnNo();
+      const txnStmt = prepare(`
+        INSERT INTO points_transactions
+        (txn_no, emp_id, points, balance_after, type, source_type, source_id, expire_at, remark, created_at)
+        VALUES (?, ?, ?, ?, 'DEDUCT', 'EXCHANGE', ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      txnStmt.run(txn_no, emp_id, -total_points,
+        account.total_points - total_points,
+        order_no, null, '订单兑换：' + order_no);
     }
 
     if (requiredApprovalLevel > 0) {

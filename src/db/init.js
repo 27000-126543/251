@@ -1,21 +1,34 @@
-const Database = require('better-sqlite3');
-const config = require('../config');
-const path = require('path');
+const initSqlJs = require('sql.js');
 const fs = require('fs');
+const path = require('path');
+const config = require('../config');
 
-function initDatabase() {
-  const dbDir = path.dirname(config.db.path);
+let dbInstance = null;
+let SQL = null;
+
+async function initDatabase() {
+  if (dbInstance) {
+    return dbInstance;
+  }
+
+  SQL = await initSqlJs();
+
+  const dbPath = config.db.path;
+  const dbDir = path.dirname(dbPath);
+
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
   }
 
-  const db = new Database(config.db.path);
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = NORMAL');
-  db.pragma('cache_size = -10000');
-  db.pragma('foreign_keys = ON');
+  let db;
+  if (fs.existsSync(dbPath)) {
+    const fileBuffer = fs.readFileSync(dbPath);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
 
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS departments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       dept_code VARCHAR(50) UNIQUE NOT NULL,
@@ -295,8 +308,121 @@ function initDatabase() {
     );
   `);
 
+  saveDatabase(db);
+  dbInstance = db;
+
   console.log('数据库初始化完成');
   return db;
 }
 
-module.exports = initDatabase;
+function saveDatabase(db) {
+  const dbPath = config.db.path;
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(dbPath, buffer);
+}
+
+function getDb() {
+  if (!dbInstance) {
+    throw new Error('数据库未初始化，请先调用 initDatabase()');
+  }
+  return dbInstance;
+}
+
+let transactionDepth = 0;
+
+function prepare(sql) {
+  const db = getDb();
+
+  return {
+    run(...params) {
+      const stmt = db.prepare(sql);
+      try {
+        stmt.run(params);
+        const result = {
+          changes: db.getRowsModified(),
+          lastInsertRowid: db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
+        };
+        if (transactionDepth === 0) {
+          saveDatabase(db);
+        }
+        return result;
+      } finally {
+        stmt.free();
+      }
+    },
+    get(...params) {
+      const stmt = db.prepare(sql);
+      try {
+        stmt.bind(params);
+        let result = undefined;
+        if (stmt.step()) {
+          result = stmt.getAsObject();
+        }
+        return result;
+      } finally {
+        stmt.free();
+      }
+    },
+    all(...params) {
+      const stmt = db.prepare(sql);
+      try {
+        stmt.bind(params);
+        const result = [];
+        while (stmt.step()) {
+          result.push(stmt.getAsObject());
+        }
+        return result;
+      } finally {
+        stmt.free();
+      }
+    }
+  };
+}
+
+function exec(sql) {
+  const db = getDb();
+  const results = db.exec(sql);
+  if (transactionDepth === 0) {
+    saveDatabase(db);
+  }
+  return results;
+}
+
+function withTransaction(fn) {
+  const db = getDb();
+
+  if (transactionDepth === 0) {
+    db.run('BEGIN TRANSACTION');
+  }
+  transactionDepth++;
+
+  try {
+    const result = fn();
+    transactionDepth--;
+    if (transactionDepth === 0) {
+      db.run('COMMIT');
+      saveDatabase(db);
+    }
+    return result;
+  } catch (error) {
+    transactionDepth--;
+    if (transactionDepth === 0) {
+      try {
+        db.run('ROLLBACK');
+      } catch (e) {
+        // ignore rollback errors
+      }
+    }
+    throw error;
+  }
+}
+
+module.exports = {
+  initDatabase,
+  getDb,
+  prepare,
+  exec,
+  withTransaction,
+  saveDatabase
+};

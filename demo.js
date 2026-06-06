@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getDb } = require('./src/db');
+const { initDatabase } = require('./src/db');
 const { seedTestData } = require('./src/db/seed');
 const { grantPoints, getPointsAccount, getPointsTransactions } = require('./src/services/points.service');
 const { createOrder, approveOrder, getOrders, getPendingApprovals, getOrderByNo } = require('./src/services/order.service');
@@ -26,7 +26,7 @@ async function runDemo() {
   console.log('');
 
   console.log('【步骤1】初始化数据库和测试数据...');
-  getDb();
+  await initDatabase();
   seedTestData();
   console.log('   ✓ 数据库初始化完成');
   console.log('   ✓ 测试数据已加载（5个部门、5名员工、8种商品、3个供应商）');
@@ -180,9 +180,10 @@ async function runDemo() {
   console.log('');
 
   console.log('【步骤9】客户签收订单...');
+  let signResult = null;
   if (shipment) {
     try {
-      const signResult = signOrder({
+      signResult = signOrder({
         logistics_no: shipment.logistics_no,
         signed_by: '李四',
         operator_id: 2
@@ -196,7 +197,7 @@ async function runDemo() {
   console.log('');
 
   console.log('【步骤10】提交满意度问卷...');
-  if (shipment) {
+  if (signResult) {
     try {
       const surveyResult = submitSurvey({
         survey_no: signResult.survey_no,
