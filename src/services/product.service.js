@@ -78,20 +78,56 @@ function allocateSuppliers(productId, quantity) {
     throw new Error('该商品没有可用供应商');
   }
 
-  const totalWeight = suppliers.reduce((sum, s) => sum + (s.rating || 1), 0);
+  if (quantity <= 0) {
+    throw new Error('采购数量必须大于0');
+  }
+
+  const weights = suppliers.map(s => Math.max(s.rating || 1, 0.1));
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+
+  if (totalWeight <= 0) {
+    const perSupplier = Math.ceil(quantity / suppliers.length);
+    let remaining = quantity;
+    const allocations = [];
+
+    for (let i = 0; i < suppliers.length; i++) {
+      const supplier = suppliers[i];
+      const isLast = i === suppliers.length - 1;
+      const allocatedQty = isLast ? remaining : Math.min(perSupplier, remaining);
+
+      if (allocatedQty > 0) {
+        allocations.push({
+          supplier_id: supplier.supplier_id,
+          supplier_name: supplier.supplier_name,
+          supplier_price: supplier.supplier_price,
+          quantity: allocatedQty,
+          estimated_cost: allocatedQty * supplier.supplier_price,
+          supply_days: supplier.supply_days
+        });
+        remaining -= allocatedQty;
+      }
+
+      if (remaining <= 0) break;
+    }
+
+    return allocations;
+  }
+
   const allocations = [];
   let remaining = quantity;
 
   for (let i = 0; i < suppliers.length; i++) {
     const supplier = suppliers[i];
+    const weight = weights[i];
     const isLast = i === suppliers.length - 1;
 
     let allocatedQty;
     if (isLast) {
       allocatedQty = remaining;
     } else {
-      allocatedQty = Math.ceil(quantity * (supplier.rating || 1) / totalWeight);
+      allocatedQty = Math.floor(quantity * weight / totalWeight);
       allocatedQty = Math.min(allocatedQty, remaining);
+      allocatedQty = Math.max(allocatedQty, 0);
     }
 
     if (allocatedQty > 0) {
@@ -107,6 +143,11 @@ function allocateSuppliers(productId, quantity) {
     }
 
     if (remaining <= 0) break;
+  }
+
+  if (remaining > 0 && allocations.length > 0) {
+    allocations[0].quantity += remaining;
+    allocations[0].estimated_cost = allocations[0].quantity * allocations[0].supplier_price;
   }
 
   return allocations;

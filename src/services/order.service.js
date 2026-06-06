@@ -1,9 +1,9 @@
-const { prepare, withTransaction, getDb } = require('../db');
+const { prepare, withTransaction } = require('../db');
 const { generateOrderNo, generateApprovalNo } = require('../utils/helpers');
-const { getPointsAccount, freezePoints, unfreezePoints, deductFrozenPoints } = require('./points.service');
-const { getProduct, updateStock, createPurchaseRequest } = require('./product.service');
+const { getPointsAccount, deductFrozenPoints } = require('./points.service');
+const { getProduct, createPurchaseRequest } = require('./product.service');
 const { createOperationLog } = require('./operation-log.service');
-const { sendApprovalReminder } = require('./alert.service');
+const { sendApprovalReminder, sendStockAlert } = require('./alert.service');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -139,10 +139,41 @@ function createOrder(params) {
     }
 
     for (const update of stockUpdates) {
-      updateStock(update.product_id, update.quantity, operator_id, operator_name);
+      const productStmt = prepare('SELECT * FROM products WHERE id = ?');
+      const product = productStmt.get(update.product_id);
+      if (product) {
+        const updateStockStmt = prepare(`
+          UPDATE products
+          SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `);
+        updateStockStmt.run(update.quantity, update.product_id);
+
+        const newStock = product.stock + update.quantity;
+        if (newStock <= product.safety_stock && update.quantity < 0) {
+          sendStockAlert(update.product_id, product.product_name, newStock, product.safety_stock);
+        }
+      }
     }
 
-    freezePoints(emp_id, total_points, order_no);
+    const accountStmt = prepare('SELECT * FROM points_accounts WHERE emp_id = ?');
+    const account = accountStmt.get(emp_id);
+    if (account) {
+      const freezeStmt = prepare(`
+        UPDATE points_accounts
+        SET available_points = available_points - ?,
+            frozen_points = frozen_points + ?,
+            version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND version = ?
+      `);
+      const freezeResult = freezeStmt.run(total_points, total_points, account.id, account.version);
+      if (freezeResult.changes === 0) {
+        throw new Error('积分冻结失败，并发冲突，请重试');
+      }
+    } else {
+      throw new Error('积分账户不存在');
+    }
 
     if (requiredApprovalLevel > 0) {
       const approval_no = generateApprovalNo();
