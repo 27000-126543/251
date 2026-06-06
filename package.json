@@ -1,0 +1,29 @@
+{
+  "name": "employee-points-system",
+  "version": "1.0.0",
+  "description": "企业级员工福利积分自动化管理与智能兑换系统",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js",
+    "test": "node tests/run-tests.js",
+    "cron:daily": "node src/cron/daily-jobs.js",
+    "cron:monthly": "node src/cron/monthly-jobs.js"
+  },
+  "keywords": ["points", "welfare", "employee", "enterprise"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "node-cron": "^3.0.3",
+    "pdfkit": "^0.14.0",
+    "exceljs": "^4.4.0",
+    "chartjs-node-canvas": "^4.1.6",
+    "winston": "^3.11.0",
+    "axios": "^1.6.7",
+    "dayjs": "^1.11.10",
+    "uuid": "^9.0.1",
+    "bull": "^4.12.2",
+    "ioredis": "^5.3.2"
+  }
+}
